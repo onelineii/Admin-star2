@@ -54,23 +54,20 @@
 
                 let html = "";
                 for (let phone in data) {
-                    const userRes = await fetch(`${BASE_URL}/users/${phone}.json`);
-                    const user = await userRes.json();
-                    const soldeActuel = user ? (user.balance || 0) : 0;
-
                     for (let id in data[phone]) {
                         const req = data[phone][id];
-                        // Nettoyage complet du montant (enlever les espaces et "CDF")
-                        const mont = parseInt(String(req.montant || req.montant_brut).replace(/[^0-9]/g, '')) || 0;
-                        const transId = req.id_transaction || "N/A";
+                        
+                        // FILTRE : On n'affiche que les demandes qui n'ont PAS encore de statut (donc en attente)
+                        if (req.status) continue; 
 
+                        const mont = parseInt(String(req.montant || req.montant_brut).replace(/[^0-9]/g, '')) || 0;
+                        
                         html += `
                             <div class="request-card p-4 shadow-sm border-l-4 ${currentTab === 'recharges' ? 'border-green-500' : 'border-red-500'}">
                                 <div class="flex justify-between items-center">
                                     <div>
                                         <p class="font-black text-slate-800 text-sm">Client: ${phone}</p>
-                                        <p class="text-[10px] text-slate-500">Solde actuel: ${soldeActuel.toLocaleString()} FC</p>
-                                        <p class="text-[10px] text-blue-600 font-bold mt-1">ID Transfert: ${transId}</p>
+                                        <p class="text-[10px] text-blue-600 font-bold mt-1">ID Trans: ${req.id_transaction || "N/A"}</p>
                                     </div>
                                     <div class="text-right">
                                         <p class="text-lg font-black text-slate-900">${mont.toLocaleString()} FC</p>
@@ -84,7 +81,7 @@
                         `;
                     }
                 }
-                listDiv.innerHTML = html;
+                listDiv.innerHTML = html || "<p class='text-center py-10 text-slate-500'>Aucune demande en attente.</p>";
             } catch (e) {
                 listDiv.innerHTML = "<p class='text-red-500 text-center'>Erreur : " + e.message + "</p>";
             }
@@ -94,6 +91,7 @@
             if (!confirm(`Confirmer l'action : ${action.toUpperCase()} ?`)) return;
 
             try {
+                // 1. Mise à jour du solde
                 const userRes = await fetch(`${BASE_URL}/users/${phone}.json`);
                 const user = await userRes.json();
                 let solde = parseFloat(user.balance || 0);
@@ -101,7 +99,7 @@
                 if (action === 'valider') {
                     if (currentTab === 'recharges') solde += montant;
                 } else if (action === 'rejeter') {
-                    if (currentTab === 'retraits') solde += montant; // On recrédite si retrait rejeté
+                    if (currentTab === 'retraits') solde += montant;
                 }
 
                 await fetch(`${BASE_URL}/users/${phone}.json`, {
@@ -109,9 +107,17 @@
                     body: JSON.stringify({ balance: solde })
                 });
                 
-                await fetch(`${BASE_URL}/${currentTab}/${phone}/${id}.json`, { method: 'DELETE' });
+                // 2. Mise à jour du statut (SANS SUPPRIMER LA LIGNE)
+                const statutFinal = (action === 'valider') ? 'Valide' : 'Rejete';
+                await fetch(`${BASE_URL}/${currentTab}/${phone}/${id}.json`, {
+                    method: 'PATCH',
+                    body: JSON.stringify({ 
+                        status: statutFinal,
+                        date_traitement: new Date().toLocaleDateString()
+                    })
+                });
                 
-                alert("Action réussie.");
+                alert("Action réussie. Historique conservé.");
                 fetchRequests();
             } catch (e) {
                 alert("Erreur serveur : " + e.message);
