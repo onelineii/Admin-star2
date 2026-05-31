@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin - Starlink/Canal</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <style>
+        body { background: #f0f2f5; font-family: 'Segoe UI', sans-serif; }
+        .request-card { background: white; border-radius: 12px; margin-bottom: 10px; }
+        .tab-active { border-bottom: 3px solid #38bdf8; color: #38bdf8; font-weight: 900; }
+    </style>
+</head>
+<body class="p-4 pb-20">
+
+    <div class="flex justify-between items-center mb-6">
+        <h1 class="text-2xl font-black text-slate-800 uppercase italic">Admin Starlink</h1>
+        <button onclick="fetchRequests()" class="text-[#38bdf8] text-xl"><i class="fa-solid fa-rotate"></i></button>
+    </div>
+
+    <div class="flex justify-around mb-6 border-b border-slate-200 bg-white rounded-t-xl">
+        <button onclick="showSection('recharges')" id="tab-recharges" class="flex-1 py-4 text-[10px] uppercase font-bold tab-active">Recharges</button>
+        <button onclick="showSection('retraits')" id="tab-retraits" class="flex-1 py-4 text-[10px] uppercase font-bold">Retraits</button>
+    </div>
+
+    <div id="list-container" class="space-y-4"></div>
+
+    <script>
+        const BASE_URL = "https://canal-e4274-default-rtdb.firebaseio.com";
+        let currentTab = 'recharges'; 
+
+        window.onload = fetchRequests;
+
+        function showSection(type) {
+            currentTab = type;
+            document.getElementById('tab-recharges').classList.toggle('tab-active', type === 'recharges');
+            document.getElementById('tab-retraits').classList.toggle('tab-active', type === 'retraits');
+            fetchRequests();
+        }
+
+        async function fetchRequests() {
+            const listDiv = document.getElementById('list-container');
+            listDiv.innerHTML = "<p class='text-center py-10 text-slate-500'>Chargement...</p>";
+            
+            try {
+                const res = await fetch(`${BASE_URL}/${currentTab}.json`);
+                const data = await res.json();
+                
+                if (!data) {
+                    listDiv.innerHTML = "<p class='text-center py-10 text-slate-500'>Aucune demande en attente.</p>";
+                    return;
+                }
+
+                let html = "";
+                for (let phone in data) {
+                    const userRes = await fetch(`${BASE_URL}/users/${phone}.json`);
+                    const user = await userRes.json();
+                    const soldeActuel = user ? (user.balance || 0) : 0;
+
+                    for (let id in data[phone]) {
+                        const req = data[phone][id];
+                        // Nettoyage complet du montant (enlever les espaces et "CDF")
+                        const mont = parseInt(String(req.montant || req.montant_brut).replace(/[^0-9]/g, '')) || 0;
+                        const transId = req.id_transaction || "N/A";
+
+                        html += `
+                            <div class="request-card p-4 shadow-sm border-l-4 ${currentTab === 'recharges' ? 'border-green-500' : 'border-red-500'}">
+                                <div class="flex justify-between items-center">
+                                    <div>
+                                        <p class="font-black text-slate-800 text-sm">Client: ${phone}</p>
+                                        <p class="text-[10px] text-slate-500">Solde actuel: ${soldeActuel.toLocaleString()} FC</p>
+                                        <p class="text-[10px] text-blue-600 font-bold mt-1">ID Transfert: ${transId}</p>
+                                    </div>
+                                    <div class="text-right">
+                                        <p class="text-lg font-black text-slate-900">${mont.toLocaleString()} FC</p>
+                                    </div>
+                                </div>
+                                <div class="flex gap-2 mt-4">
+                                    <button onclick="processRequest('valider', '${phone}', '${id}', ${mont})" class="flex-1 bg-green-600 text-white py-2 rounded-lg text-[10px] font-black uppercase">Valider</button>
+                                    <button onclick="processRequest('rejeter', '${phone}', '${id}', ${mont})" class="flex-1 bg-red-600 text-white py-2 rounded-lg text-[10px] font-black uppercase">Rejeter</button>
+                                </div>
+                            </div>
+                        `;
+                    }
+                }
+                listDiv.innerHTML = html;
+            } catch (e) {
+                listDiv.innerHTML = "<p class='text-red-500 text-center'>Erreur : " + e.message + "</p>";
+            }
+        }
+
+        async function processRequest(action, phone, id, montant) {
+            if (!confirm(`Confirmer l'action : ${action.toUpperCase()} ?`)) return;
+
+            try {
+                const userRes = await fetch(`${BASE_URL}/users/${phone}.json`);
+                const user = await userRes.json();
+                let solde = parseFloat(user.balance || 0);
+
+                if (action === 'valider') {
+                    if (currentTab === 'recharges') solde += montant;
+                } else if (action === 'rejeter') {
+                    if (currentTab === 'retraits') solde += montant; // On recrédite si retrait rejeté
+                }
+
+                await fetch(`${BASE_URL}/users/${phone}.json`, {
+                    method: 'PATCH',
+                    body: JSON.stringify({ balance: solde })
+                });
+                
+                await fetch(`${BASE_URL}/${currentTab}/${phone}/${id}.json`, { method: 'DELETE' });
+                
+                alert("Action réussie.");
+                fetchRequests();
+            } catch (e) {
+                alert("Erreur serveur : " + e.message);
+            }
+        }
+    </script>
+</body>
+</html>
